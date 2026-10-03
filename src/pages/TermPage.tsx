@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   CATEGORIES,
   Category,
+  QuizKind,
   Term,
   buildQuizQuestion,
   getTermById,
@@ -13,9 +14,16 @@ import {
 type Props = {
   mode: 'quiz' | 'browse';
   category: Category | 'all';
+  initialKind?: QuizKind;
+  initialReveal?: boolean;
 };
 
-export function TermPage({ mode, category }: Props) {
+export function TermPage({
+  mode,
+  category,
+  initialKind,
+  initialReveal = false,
+}: Props) {
   const { termId } = useParams();
   const navigate = useNavigate();
 
@@ -31,36 +39,52 @@ export function TermPage({ mode, category }: Props) {
   }, [deck, termId]);
 
   const [index, setIndex] = useState(initialIndex);
-  const [revealed, setRevealed] = useState(mode === 'browse');
+  const [revealed, setRevealed] = useState(
+    mode === 'browse' || initialReveal,
+  );
+  const [quizKind, setQuizKind] = useState<QuizKind | undefined>(initialKind);
   const [quizText, setQuizText] = useState('');
 
   useEffect(() => {
     setIndex(initialIndex);
-    setRevealed(mode === 'browse');
-  }, [initialIndex, mode, termId]);
+    setRevealed(mode === 'browse' || initialReveal);
+    setQuizKind(initialKind);
+  }, [initialIndex, mode, termId, initialKind, initialReveal]);
 
   const term: Term | undefined =
     deck[index] ?? (termId ? getTermById(termId) : undefined);
 
   useEffect(() => {
-    if (!term) return;
-    if (mode === 'quiz') {
-      setQuizText(buildQuizQuestion(term).text);
-    } else {
+    if (!term || mode !== 'quiz') {
       setQuizText('');
+      return;
     }
-  }, [term?.id, mode, index]);
+    const built = buildQuizQuestion(term, quizKind ?? initialKind);
+    setQuizKind(built.kind);
+    setQuizText(built.text);
+  }, [term?.id, mode, index]); // intentional: quizKind/initialKind μόνο στην είσοδο του όρου
 
-  // Συγχρόνισε το URL με τον τρέχοντα όρο (για share / ειδοποιήσεις)
   useEffect(() => {
     const current = deck[index];
     if (!current) return;
-    if (current.id !== termId) {
-      navigate(`/term/${current.id}?mode=${mode}&category=${category}`, {
-        replace: true,
-      });
+
+    let next: string;
+    if (mode === 'browse') {
+      next = `/term/${current.id}?mode=browse&category=${category}`;
+    } else if (quizKind) {
+      next = `/term/${current.id}?mode=quiz&category=${category}&kind=${quizKind}${
+        revealed ? '&reveal=1' : ''
+      }`;
+    } else {
+      return;
     }
-  }, [index, deck, termId, mode, category, navigate]);
+
+    const currentSearch = window.location.search;
+    const targetSearch = next.includes('?') ? `?${next.split('?')[1]}` : '';
+    if (current.id !== termId || currentSearch !== targetSearch) {
+      navigate(next, { replace: true });
+    }
+  }, [index, deck, termId, mode, category, navigate, quizKind, revealed]);
 
   if (!term) {
     return (
@@ -76,6 +100,12 @@ export function TermPage({ mode, category }: Props) {
   const cat = CATEGORIES[term.category];
   const canPrev = index > 0;
   const canNext = index < deck.length - 1;
+
+  const go = (delta: number) => {
+    setQuizKind(undefined);
+    setRevealed(mode === 'browse');
+    setIndex((i) => i + delta);
+  };
 
   return (
     <div className="app-shell">
@@ -116,7 +146,7 @@ export function TermPage({ mode, category }: Props) {
           )}
           <div className="icon-hero">{term.icon}</div>
           <h1 className="word-el">{term.el}</h1>
-          <p className="word-en">{term.en}</p>
+          <p className="word-en">Αγγλικά: {term.en}</p>
           <div className="meaning-box">
             <div className="meaning-label">Εξήγηση</div>
             <p className="meaning">{term.meaning}</p>
@@ -129,10 +159,7 @@ export function TermPage({ mode, category }: Props) {
           type="button"
           className="btn btn-secondary"
           disabled={!canPrev}
-          onClick={() => {
-            setIndex((i) => i - 1);
-            setRevealed(mode === 'browse');
-          }}
+          onClick={() => go(-1)}
         >
           ‹ Προηγούμενο
         </button>
@@ -140,10 +167,7 @@ export function TermPage({ mode, category }: Props) {
           type="button"
           className="btn btn-secondary btn-next"
           disabled={!canNext}
-          onClick={() => {
-            setIndex((i) => i + 1);
-            setRevealed(mode === 'browse');
-          }}
+          onClick={() => go(1)}
         >
           Επόμενο ›
         </button>

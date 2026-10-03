@@ -2325,7 +2325,8 @@ export function shuffleTerms(list: Term[] = TERMS): Term[] {
   return arr;
 }
 
-export type QuizKind = 'en-to-el' | 'el-to-en' | 'meaning';
+/** Μόνο ελληνικές ερωτήσεις — τα αγγλικά εμφανίζονται στην απάντηση. */
+export type QuizKind = 'en-to-el' | 'meaning';
 
 /** Κύρια αγγλική μορφή χωρίς εναλλακτικές/παρενθέσεις */
 export function primaryEnglish(term: Term): string {
@@ -2336,31 +2337,30 @@ export function primaryGreek(term: Term): string {
   return term.el.split('/')[0].trim();
 }
 
+export function parseQuizKind(value: string | null | undefined): QuizKind | undefined {
+  if (value === 'en-to-el' || value === 'meaning') return value;
+  return undefined;
+}
+
 /**
- * Πραγματική ερώτηση εκμάθησης — δεν αποκαλύπτει την απάντηση στην εκφώνηση.
- * π.χ. «Πώς λέγεται στα ελληνικά το Mainsheet;» και όχι «Πώς λέγεται η σκότα μαΐστρας;»
+ * Ερωτήσεις στα ελληνικά. Τα αγγλικά είναι μόνο στην απάντηση.
+ * π.χ. «Πώς λέγεται στα ελληνικά το Baby stay;» → Μεσοπρότονος (+ Baby stay)
  */
 export function buildQuizQuestion(
   term: Term,
   kind?: QuizKind,
 ): { kind: QuizKind; text: string } {
-  const options: QuizKind[] = ['en-to-el', 'el-to-en', 'meaning'];
+  const options: QuizKind[] = ['en-to-el', 'meaning'];
   const selected =
     kind ?? options[Math.floor(Math.random() * options.length)];
 
   const en = primaryEnglish(term);
-  const el = primaryGreek(term);
 
   switch (selected) {
     case 'en-to-el':
       return {
         kind: selected,
         text: `Πώς λέγεται στα ελληνικά το «${en}»;`,
-      };
-    case 'el-to-en':
-      return {
-        kind: selected,
-        text: `Πώς λέγεται στα αγγλικά το «${el}»;`,
       };
     case 'meaning':
       return {

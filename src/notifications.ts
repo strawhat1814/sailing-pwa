@@ -47,20 +47,26 @@ function appPath(path: string): string {
   return `${base}${path.replace(/^\//, '')}`;
 }
 
-function openTermFromNotification(termId: string) {
-  const url = `${window.location.origin}${appPath(`term/${termId}?mode=browse`)}`;
+function openNotificationUrl(url: string) {
+  const absolute = url.startsWith('http')
+    ? url
+    : `${window.location.origin}${url.startsWith('/') ? url : `/${url}`}`;
   window.focus();
-  window.location.assign(url);
+  window.location.assign(absolute);
 }
 
 async function showTermNotification(termId?: string): Promise<void> {
   const term = termId
-    ? TERMS.find((t) => t.id === termId) ?? getRandomTerm()
+    ? (TERMS.find((t) => t.id === termId) ?? getRandomTerm())
     : getRandomTerm();
 
+  // Σταθερή ερώτηση — το ίδιο kind περνάει στο URL ώστε το κλικ να ανοίξει την ίδια
+  const quiz = buildQuizQuestion(term);
   const title = '⛵ Ορολογία ιστιοπλοΐας';
-  const body = buildQuizQuestion(term).text.replace(/\n+/g, ' ');
-  const url = appPath(`term/${term.id}?mode=quiz&category=all`);
+  const body = quiz.text.replace(/\n+/g, ' ');
+  const url = appPath(
+    `term/${term.id}?mode=quiz&category=all&kind=${quiz.kind}&reveal=1`,
+  );
 
   if ('serviceWorker' in navigator) {
     const reg = await navigator.serviceWorker.ready;
@@ -70,7 +76,7 @@ async function showTermNotification(termId?: string): Promise<void> {
       icon,
       badge: icon,
       tag: 'sailing-term',
-      data: { url, termId: term.id },
+      data: { url, termId: term.id, kind: quiz.kind },
     });
     return;
   }
@@ -79,10 +85,10 @@ async function showTermNotification(termId?: string): Promise<void> {
     body,
     icon: appPath('icons/icon-192.svg'),
     tag: 'sailing-term',
-    data: { url, termId: term.id },
+    data: { url, termId: term.id, kind: quiz.kind },
   });
   n.onclick = () => {
-    openTermFromNotification(term.id);
+    openNotificationUrl(url);
     n.close();
   };
 }
@@ -133,12 +139,11 @@ export async function initNotificationScheduler(): Promise<void> {
     navigator.serviceWorker.addEventListener('message', (event) => {
       const data = event.data as { type?: string; url?: string } | undefined;
       if (data?.type === 'NOTIFICATION_CLICK' && data.url) {
-        window.location.assign(data.url);
+        openNotificationUrl(data.url);
       }
     });
   }
 
-  // Ξαναπρογραμμάτισε όταν επιστρέφει ο χρήστης στην καρτέλα
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && getNotificationsEnabled()) {
       void scheduleNextNotification(false);
