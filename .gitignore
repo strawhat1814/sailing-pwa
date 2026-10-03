@@ -1,0 +1,32 @@
+# dependencies
+node_modules/
+
+# build
+dist/
+dist-*/
+dev-dist/
+
+# Vite / local
+.vite/
+*.local
+.env*.local
+
+# logs / debug
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# typescript
+*.tsbuildinfo
+
+# legacy expo leftovers
+.expo/
+expo-env.d.ts
+/ios
+/android
