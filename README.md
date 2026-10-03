@@ -10,9 +10,15 @@ Progressive Web App που τρέχει σε **οποιοδήποτε browser** 
 
 ## Online (GitHub Pages)
 
-Μετά το push στο `master`, το GitHub Actions κάνει deploy αυτόματα:
-
 **https://strawhat1814.github.io/sailing-pwa/**
+
+Repo: https://github.com/strawhat1814/sailing-pwa
+
+Για νέο deploy μετά από αλλαγές:
+
+```bash
+npm run deploy
+```
 
 ## Εκκίνηση τοπικά
 
