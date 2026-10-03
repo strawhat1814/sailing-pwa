@@ -3,21 +3,14 @@ import { HomePage } from './pages/HomePage';
 import { SettingsPage } from './pages/SettingsPage';
 import { TermPage } from './pages/TermPage';
 import type { Category } from './data/terms';
-import { parseQuizKind } from './data/terms';
 
 function TermRoute() {
   const [params] = useSearchParams();
   const mode = params.get('mode') === 'browse' ? 'browse' : 'quiz';
   const category = (params.get('category') as Category | 'all' | null) ?? 'all';
-  const kind = parseQuizKind(params.get('kind'));
   const reveal = params.get('reveal') === '1';
   return (
-    <TermPage
-      mode={mode}
-      category={category}
-      initialKind={kind}
-      initialReveal={reveal}
-    />
+    <TermPage mode={mode} category={category} initialReveal={reveal} />
   );
 }
 

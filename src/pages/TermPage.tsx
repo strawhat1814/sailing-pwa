@@ -3,7 +3,6 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   CATEGORIES,
   Category,
-  QuizKind,
   Term,
   buildQuizQuestion,
   getTermById,
@@ -14,14 +13,12 @@ import {
 type Props = {
   mode: 'quiz' | 'browse';
   category: Category | 'all';
-  initialKind?: QuizKind;
   initialReveal?: boolean;
 };
 
 export function TermPage({
   mode,
   category,
-  initialKind,
   initialReveal = false,
 }: Props) {
   const { termId } = useParams();
@@ -42,49 +39,34 @@ export function TermPage({
   const [revealed, setRevealed] = useState(
     mode === 'browse' || initialReveal,
   );
-  const [quizKind, setQuizKind] = useState<QuizKind | undefined>(initialKind);
-  const [quizText, setQuizText] = useState('');
 
   useEffect(() => {
     setIndex(initialIndex);
     setRevealed(mode === 'browse' || initialReveal);
-    setQuizKind(initialKind);
-  }, [initialIndex, mode, termId, initialKind, initialReveal]);
+  }, [initialIndex, mode, termId, initialReveal]);
 
   const term: Term | undefined =
     deck[index] ?? (termId ? getTermById(termId) : undefined);
 
-  useEffect(() => {
-    if (!term || mode !== 'quiz') {
-      setQuizText('');
-      return;
-    }
-    const built = buildQuizQuestion(term, quizKind ?? initialKind);
-    setQuizKind(built.kind);
-    setQuizText(built.text);
-  }, [term?.id, mode, index]); // intentional: quizKind/initialKind μόνο στην είσοδο του όρου
+  // Σταθερή ανά όρο — η ειδοποίηση ανοίγει πάντα την ίδια εκφώνηση
+  const quizText = term && mode === 'quiz' ? buildQuizQuestion(term) : '';
 
   useEffect(() => {
     const current = deck[index];
     if (!current) return;
 
-    let next: string;
-    if (mode === 'browse') {
-      next = `/term/${current.id}?mode=browse&category=${category}`;
-    } else if (quizKind) {
-      next = `/term/${current.id}?mode=quiz&category=${category}&kind=${quizKind}${
-        revealed ? '&reveal=1' : ''
-      }`;
-    } else {
-      return;
-    }
+    const next =
+      mode === 'browse'
+        ? `/term/${current.id}?mode=browse&category=${category}`
+        : `/term/${current.id}?mode=quiz&category=${category}${
+            revealed ? '&reveal=1' : ''
+          }`;
 
-    const currentSearch = window.location.search;
     const targetSearch = next.includes('?') ? `?${next.split('?')[1]}` : '';
-    if (current.id !== termId || currentSearch !== targetSearch) {
+    if (current.id !== termId || window.location.search !== targetSearch) {
       navigate(next, { replace: true });
     }
-  }, [index, deck, termId, mode, category, navigate, quizKind, revealed]);
+  }, [index, deck, termId, mode, category, navigate, revealed]);
 
   if (!term) {
     return (
@@ -102,7 +84,6 @@ export function TermPage({
   const canNext = index < deck.length - 1;
 
   const go = (delta: number) => {
-    setQuizKind(undefined);
     setRevealed(mode === 'browse');
     setIndex((i) => i + delta);
   };

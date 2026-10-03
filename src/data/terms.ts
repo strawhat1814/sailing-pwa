@@ -463,7 +463,7 @@ export const TERMS: Term[] = [
     en: 'Cleat',
     meaning: 'Εξάρτημα στο κατάστρωμα ή την προβλήτα όπου δένουμε σχοινιά με φιγούρα-8.',
     category: 'hardware',
-    question: 'Πού δένουμε τα σχοινιά στο κατάστρωμα;',
+    question: 'Πώς ονομάζεται το εξάρτημα στο κατάστρωμα ή την προβλήτα όπου δένουμε τα σχοινιά;',
     icon: '🔩',
   },
   {
@@ -2325,9 +2325,6 @@ export function shuffleTerms(list: Term[] = TERMS): Term[] {
   return arr;
 }
 
-/** Μόνο ελληνικές ερωτήσεις — τα αγγλικά εμφανίζονται στην απάντηση. */
-export type QuizKind = 'en-to-el' | 'meaning';
-
 /** Κύρια αγγλική μορφή χωρίς εναλλακτικές/παρενθέσεις */
 export function primaryEnglish(term: Term): string {
   return term.en.split('/')[0].replace(/\s*\(.*?\)\s*/g, '').trim();
@@ -2337,35 +2334,67 @@ export function primaryGreek(term: Term): string {
   return term.el.split('/')[0].trim();
 }
 
-export function parseQuizKind(value: string | null | undefined): QuizKind | undefined {
-  if (value === 'en-to-el' || value === 'meaning') return value;
-  return undefined;
+function normalizeForMatch(s: string): string {
+  return s
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .toLowerCase();
+}
+
+function answerNeedles(term: Term): string[] {
+  return [...term.el.split(/[/,]/), ...term.en.split(/[/,]/)]
+    .map((s) => s.replace(/\(.*?\)/g, '').trim())
+    .filter((s) => s.length > 2)
+    .sort((a, b) => b.length - a.length);
+}
+
+/** Η εκφώνηση δεν πρέπει να περιέχει την απάντηση (ελληνικά ή αγγλικά). */
+function leaksAnswer(prompt: string, term: Term): boolean {
+  const n = normalizeForMatch(prompt);
+  return answerNeedles(term).some((needle) =>
+    n.includes(normalizeForMatch(needle)),
+  );
+}
+
+function stripLeadingAnswer(text: string, term: Term): string {
+  let t = text.trim();
+  for (const needle of answerNeedles(term)) {
+    const re = new RegExp(
+      `^[«"']?${needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[»"']?\\s*[=:\\-—–]?\\s*`,
+      'i',
+    );
+    t = t.replace(re, '');
+  }
+  return t.trim();
 }
 
 /**
- * Ερωτήσεις στα ελληνικά. Τα αγγλικά είναι μόνο στην απάντηση.
- * π.χ. «Πώς λέγεται στα ελληνικά το Baby stay;» → Μεσοπρότονος (+ Baby stay)
+ * Αντίστροφη εκμάθηση: πρώτα η λέξη-στόχος, μετά ερώτηση από την έννοια/χρήση.
+ * Απάντηση = ελληνικός όρος (+ αγγλικά μόνο στην αποκάλυψη).
+ *
+ * π.χ. στόχος «Δέστρα / Κοτσανέλο» →
+ * «Πώς ονομάζεται το εξάρτημα στο κατάστρωμα όπου δένουμε σχοινιά;»
  */
-export function buildQuizQuestion(
-  term: Term,
-  kind?: QuizKind,
-): { kind: QuizKind; text: string } {
-  const options: QuizKind[] = ['en-to-el', 'meaning'];
-  const selected =
-    kind ?? options[Math.floor(Math.random() * options.length)];
-
-  const en = primaryEnglish(term);
-
-  switch (selected) {
-    case 'en-to-el':
-      return {
-        kind: selected,
-        text: `Πώς λέγεται στα ελληνικά το «${en}»;`,
-      };
-    case 'meaning':
-      return {
-        kind: selected,
-        text: `Ποιος ναυτικός όρος ταιριάζει σε αυτή την περιγραφή;\n\n${term.meaning}`,
-      };
+export function buildQuizQuestion(term: Term): string {
+  const curated = term.question?.trim();
+  if (
+    curated &&
+    !leaksAnswer(curated, term) &&
+    !/στα ελληνικά|στα αγγλικά|«.*»/i.test(curated)
+  ) {
+    return curated
+      .replace(/Πώς λέγεται/gi, 'Πώς ονομάζεται')
+      .replace(/Πως λέγεται/gi, 'Πώς ονομάζεται');
   }
+
+  let clue = stripLeadingAnswer(term.meaning.trim().replace(/\.$/, ''), term);
+  clue = clue.replace(/\s+/g, ' ').trim();
+
+  if (/^(το|τη|την|τον|τα|η|ο|οι|τους|τις|ένα|ένας|μια|μία)\s/i.test(clue)) {
+    return `Πώς ονομάζεται ${clue};`;
+  }
+
+  // «Εξάρτημα στο…» → «Πώς ονομάζεται το εξάρτημα στο…;»
+  const withArticle = clue.charAt(0).toLocaleLowerCase('el-GR') + clue.slice(1);
+  return `Πώς ονομάζεται το ${withArticle};`;
 }

@@ -20,7 +20,7 @@ export function setNotificationsEnabled(enabled: boolean): void {
   }
 }
 
-/** Προεπιλογή: κάθε 120 λεπτά (2 ώρες). Στο web χρησιμοποιούμε λεπτά για ευελιξία. */
+/** Προεπιλογή: κάθε 120 λεπτά (2 ώρες). */
 export function getIntervalMinutes(): number {
   const raw = localStorage.getItem(KEY_INTERVAL);
   const n = raw ? Number(raw) : 120;
@@ -60,12 +60,12 @@ async function showTermNotification(termId?: string): Promise<void> {
     ? (TERMS.find((t) => t.id === termId) ?? getRandomTerm())
     : getRandomTerm();
 
-  // Σταθερή ερώτηση — το ίδιο kind περνάει στο URL ώστε το κλικ να ανοίξει την ίδια
-  const quiz = buildQuizQuestion(term);
+  const question = buildQuizQuestion(term);
   const title = '⛵ Ορολογία ιστιοπλοΐας';
-  const body = quiz.text.replace(/\n+/g, ' ');
+  const body = question.replace(/\n+/g, ' ');
+  // Ίδιος όρος → ίδια ερώτηση (ντετερμινιστική από meaning/question)
   const url = appPath(
-    `term/${term.id}?mode=quiz&category=all&kind=${quiz.kind}&reveal=1`,
+    `term/${term.id}?mode=quiz&category=all&reveal=1`,
   );
 
   if ('serviceWorker' in navigator) {
@@ -76,7 +76,7 @@ async function showTermNotification(termId?: string): Promise<void> {
       icon,
       badge: icon,
       tag: 'sailing-term',
-      data: { url, termId: term.id, kind: quiz.kind },
+      data: { url, termId: term.id },
     });
     return;
   }
@@ -85,7 +85,7 @@ async function showTermNotification(termId?: string): Promise<void> {
     body,
     icon: appPath('icons/icon-192.svg'),
     tag: 'sailing-term',
-    data: { url, termId: term.id, kind: quiz.kind },
+    data: { url, termId: term.id },
   });
   n.onclick = () => {
     openNotificationUrl(url);
