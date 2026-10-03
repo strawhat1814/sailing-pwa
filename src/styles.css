@@ -8,8 +8,9 @@
   --ink: #1a2430;
   --muted: #5a6b76;
   --card: rgba(255, 255, 255, 0.94);
-  --font-display: 'Cormorant Garamond', Georgia, serif;
-  --font-body: 'Literata', Georgia, serif;
+  /* Μία οικογένεια με πλήρη ελληνικά + λατινικά — ομοιόμορφο ΕΛ/ΕΝ */
+  --font-display: 'Source Serif 4', 'Noto Serif', Georgia, serif;
+  --font-body: 'Source Serif 4', 'Noto Serif', Georgia, serif;
 }
 
 * {
