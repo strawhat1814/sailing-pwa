@@ -1,28 +1,52 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { TERMS } from '../data/terms';
 import {
   ensureNotificationPermission,
   getIntervalMinutes,
   getNotificationsEnabled,
-  scheduleNextNotification,
+  getScheduleInfo,
+  rescheduleAll,
   sendTestNotification,
   setIntervalMinutes,
   setNotificationsEnabled,
+  supportsScheduledTriggers,
 } from '../notifications';
 
 const INTERVALS = [
-  { label: 'Κάθε 15 λεπτά (δοκιμή)', minutes: 15 },
-  { label: 'Κάθε 1 ώρα', minutes: 60 },
-  { label: 'Κάθε 2 ώρες', minutes: 120 },
-  { label: 'Κάθε 4 ώρες', minutes: 240 },
-  { label: 'Κάθε 8 ώρες', minutes: 480 },
+  { label: 'Τυχαία ~ κάθε 15 λεπτά', minutes: 15 },
+  { label: 'Τυχαία ~ κάθε 1 ώρα', minutes: 60 },
+  { label: 'Τυχαία ~ κάθε 2 ώρες', minutes: 120 },
+  { label: 'Τυχαία ~ κάθε 4 ώρες', minutes: 240 },
+  { label: 'Τυχαία ~ κάθε 8 ώρες', minutes: 480 },
 ];
+
+function formatNext(ts: number | null): string {
+  if (!ts) return '—';
+  try {
+    return new Date(ts).toLocaleString('el-GR', {
+      weekday: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch {
+    return '—';
+  }
+}
 
 export function SettingsPage() {
   const [enabled, setEnabled] = useState(getNotificationsEnabled);
   const [minutes, setMinutes] = useState(getIntervalMinutes);
   const [status, setStatus] = useState('');
+  const [info, setInfo] = useState(getScheduleInfo);
+
+  const refreshInfo = () => setInfo(getScheduleInfo());
+
+  useEffect(() => {
+    refreshInfo();
+    const id = window.setInterval(refreshInfo, 15_000);
+    return () => window.clearInterval(id);
+  }, []);
 
   const onToggle = async () => {
     const next = !enabled;
@@ -34,29 +58,45 @@ export function SettingsPage() {
         );
         return;
       }
+      setEnabled(true);
+      const n = await rescheduleAll();
+      setStatus(
+        n > 0
+          ? `Ενεργό — προγραμματίστηκαν ${n} τυχαίες ειδοποιήσεις.`
+          : 'Ενεργό — ουρά ειδοποιήσεων έτοιμη.',
+      );
+    } else {
+      setEnabled(false);
+      setNotificationsEnabled(false);
+      setStatus('Οι ειδοποιήσεις απενεργοποιήθηκαν.');
     }
-    setEnabled(next);
-    setNotificationsEnabled(next);
-    setStatus(
-      next
-        ? 'Οι ειδοποιήσεις ενεργοποιήθηκαν.'
-        : 'Οι ειδοποιήσεις απενεργοποιήθηκαν.',
-    );
+    refreshInfo();
   };
 
-  const onInterval = (m: number) => {
+  const onInterval = async (m: number) => {
     setMinutes(m);
     setIntervalMinutes(m);
-    setStatus(`Διάστημα: κάθε ${m < 60 ? `${m} λεπτά` : `${m / 60} ώρ${m === 60 ? 'α' : 'ες'}`}.`);
+    if (enabled) {
+      const n = await rescheduleAll();
+      setStatus(
+        `Νέο διάστημα ~${m < 60 ? `${m} λεπτά` : `${m / 60} ώρ.`} — ${n} τυχαίες ειδοποιήσεις.`,
+      );
+    } else {
+      setStatus(
+        `Διάστημα: τυχαία γύρω από ${m < 60 ? `${m} λεπτά` : `${m / 60} ώρ`}.`,
+      );
+    }
+    refreshInfo();
   };
 
   const onTest = async () => {
     const ok = await sendTestNotification();
     setStatus(
       ok
-        ? 'Στάλθηκε δοκιμαστική ειδοποίηση.'
+        ? 'Στάλθηκε δοκιμαστική ειδοποίηση (το πρόγραμμα συνεχίζει).'
         : 'Απέτυχε — επίτρεψε ειδοποιήσεις στον browser.',
     );
+    refreshInfo();
   };
 
   const onReschedule = async () => {
@@ -66,9 +106,11 @@ export function SettingsPage() {
       return;
     }
     setEnabled(true);
-    setNotificationsEnabled(true);
-    await scheduleNextNotification(true);
-    setStatus('Προγραμματίστηκε η επόμενη τυχαία ερώτηση.');
+    const n = await rescheduleAll();
+    setStatus(
+      `Προγραμματίστηκαν ${n || 'πολλές'} τυχαίες ειδοποιήσεις σε τυχαίες ώρες.`,
+    );
+    refreshInfo();
   };
 
   return (
@@ -81,8 +123,8 @@ export function SettingsPage() {
         Ειδοποιήσεις
       </h1>
       <p className="subtitle">
-        Η PWA στέλνει τυχαίες ερωτήσεις ορολογίας. Με κλικ ανοίγει ο όρος με
-        ελληνική εξήγηση ({TERMS.length} λέξεις).
+        Τυχαίες ερωτήσεις σε τυχαίες ώρες (όχι ακριβώς κάθε Χ λεπτά). Με κλικ
+        ανοίγει ο όρος ({TERMS.length} λέξεις).
       </p>
 
       <div className="panel row">
@@ -97,25 +139,47 @@ export function SettingsPage() {
         </button>
       </div>
 
+      <div className="panel" style={{ marginTop: 0 }}>
+        <p style={{ margin: '0 0 0.35rem', opacity: 0.85, fontSize: '0.9rem' }}>
+          Σε αναμονή: <strong>{info.remaining}</strong>
+        </p>
+        <p style={{ margin: 0, opacity: 0.85, fontSize: '0.9rem' }}>
+          Επόμενη περίπου: <strong>{formatNext(info.nextAt)}</strong>
+        </p>
+        <p style={{ margin: '0.5rem 0 0', opacity: 0.65, fontSize: '0.8rem' }}>
+          {supportsScheduledTriggers()
+            ? 'Λειτουργία: προγραμματισμένες ειδοποιήσεις (δουλεύουν και με κλειστή εφαρμογή σε Chrome/Edge).'
+            : 'Λειτουργία: ουρά + έλεγχος όσο η PWA/καρτέλα ζει. Σε Chrome/Edge εγκατεστημένη PWA δουλεύει καλύτερα.'}
+        </p>
+      </div>
+
       <h2 className="section-title" style={{ marginTop: '0.5rem' }}>
-        Συχνότητα
+        Μέσο διάστημα
       </h2>
       {INTERVALS.map((item) => (
         <button
           key={item.minutes}
           type="button"
           className={`interval ${minutes === item.minutes ? 'active' : ''}`}
-          onClick={() => onInterval(item.minutes)}
+          onClick={() => void onInterval(item.minutes)}
         >
           {item.label}
         </button>
       ))}
 
       <div className="stack" style={{ marginTop: '1.2rem' }}>
-        <button type="button" className="btn btn-primary" onClick={() => void onReschedule()}>
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={() => void onReschedule()}
+        >
           <span className="label">Προγραμμάτισε ξανά</span>
         </button>
-        <button type="button" className="btn btn-secondary" onClick={() => void onTest()}>
+        <button
+          type="button"
+          className="btn btn-secondary"
+          onClick={() => void onTest()}
+        >
           Δοκιμαστική ειδοποίηση τώρα
         </button>
       </div>
@@ -123,10 +187,9 @@ export function SettingsPage() {
       {status && <p className="status">{status}</p>}
 
       <p className="sources">
-        Σημείωση: Στο web οι ειδοποιήσεις δουλεύουν καλύτερα όταν η PWA είναι
-        εγκατεστημένη (Add to Home Screen) και ο browser είναι ανοιχτός στο
-        παρασκήνιο. Το iOS Safari έχει περιορισμούς — εγκατάσταση στην αρχική
-        οθόνη βοηθάει.
+        Πάτα «Προγραμμάτισε ξανά» μετά την εγκατάσταση της PWA. Σε Chrome/Android
+        προγραμματίζονται δεκάδες τυχαίες ειδοποιήσεις μπροστά. Το iOS έχει
+        περισσότερους περιορισμούς.
         <br />
         <br />
         Πηγές ορολογίας: PASIDI.GR, IonianSkipper, Halkidiki Sailing.
