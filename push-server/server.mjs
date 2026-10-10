@@ -124,6 +124,8 @@ async function sendPush(subscription, payload) {
         url: payload.url,
         termId: payload.termId,
         tag: payload.tag || `sailing-${payload.termId}-${Date.now()}`,
+        answer: payload.answer,
+        choices: payload.choices,
       },
       adminContact: VAPID_SUBJECT,
       options: {
