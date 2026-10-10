@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: sailing-push
+    runtime: node
+    plan: free
+    rootDir: push-server
+    buildCommand: npm install --omit=dev
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: VAPID_PUBLIC_KEY
+        value: BKPjkYH16YAQmBxARvV_IjRTsAhHRMSbLA8zcPY1--ULq8H-m9e7DJ1ZX7VyZFF7IrVlQuBEOlYmEjsA-2fg220
+      - key: VAPID_SUBJECT
+        value: mailto:sailing-pwa@users.noreply.github.com
+      - key: ALLOWED_ORIGINS
+        value: https://strawhat1814.github.io
+      - key: TICK_MS
+        value: "120000"
+      - key: VAPID_PRIVATE_JWK
+        sync: false
