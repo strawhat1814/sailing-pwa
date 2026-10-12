@@ -1,0 +1,17 @@
+name: Push server keep-alive
+
+on:
+  schedule:
+    # Every 5 minutes — wakes Render free tier and delivers due pushes
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Hit /tick
+        run: |
+          set -e
+          URL="${{ vars.PUSH_SERVER_URL || 'https://sailing-push.onrender.com' }}"
+          curl -fsS --max-time 90 "${URL}/tick" || curl -fsS --max-time 120 "${URL}/health"

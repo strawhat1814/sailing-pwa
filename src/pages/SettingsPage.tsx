@@ -197,7 +197,7 @@ export function SettingsPage() {
           className="search-input"
           style={{ marginTop: '0.35rem' }}
           type="url"
-          placeholder="https://xxxx.trycloudflare.com"
+          placeholder="https://sailing-push.onrender.com"
           value={pushUrlDraft}
           onChange={(e) => setPushUrlDraft(e.target.value)}
           autoCapitalize="off"
@@ -213,10 +213,9 @@ export function SettingsPage() {
           Αποθήκευση URL
         </button>
         <p style={{ margin: '0.65rem 0 0', opacity: 0.65, fontSize: '0.8rem' }}>
-          Χρησιμοποίησε το Render URL (https://….onrender.com). Μετά το sync
-          πρέπει να έρθει άμεσα μία ειδοποίηση. Free Render «κοιμάται» — βάλε
-          δωρεάν cron (cron-job.org) κάθε 5′ στο{' '}
-          <code>…/tick</code> για να μένει ξύπνιο.
+          Προεπιλογή: sailing-push.onrender.com. Πάτα «Συγχρόνισε ξανά» — πρέπει
+          να έρθει άμεσα μία ειδοποίηση. Το GitHub Action ξυπνά τον server κάθε
+          5′.
         </p>
       </div>
 

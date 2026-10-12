@@ -9,6 +9,7 @@ const KEY_PUSH_URL = 'sailing.notifications.pushApiUrl';
 
 const POOL_SIZE = 80;
 
+const DEFAULT_PUSH_API_URL = 'https://sailing-push.onrender.com';
 const ENV_PUSH_API_URL = (
   import.meta.env.VITE_PUSH_API_URL as string | undefined
 )?.replace(/\/$/, '');
@@ -20,7 +21,7 @@ function normalizePushUrl(raw: string): string {
   return raw.trim().replace(/\/$/, '');
 }
 
-/** Runtime URL (Settings) wins over build-time VITE_PUSH_API_URL. */
+/** Runtime URL (Settings) → build-time env → known Render default. */
 export function getPushApiUrl(): string | null {
   try {
     const saved = localStorage.getItem(KEY_PUSH_URL);
@@ -28,7 +29,7 @@ export function getPushApiUrl(): string | null {
   } catch {
     // ignore
   }
-  return ENV_PUSH_API_URL || null;
+  return ENV_PUSH_API_URL || DEFAULT_PUSH_API_URL;
 }
 
 export function setPushApiUrl(url: string): void {
@@ -179,8 +180,6 @@ function saveLastSync(info: {
   );
 }
 
-// keep type happy for callers that read error after ok sync
-
 export function getLastPushSync(): {
   ok: boolean;
   nextAt?: number;
@@ -225,11 +224,14 @@ async function ensurePushSubscription(): Promise<PushSubscription | null> {
 async function syncToPushServer(
   sub: PushSubscription,
   enabled: boolean,
+  opts: { immediate?: boolean } = {},
 ): Promise<{ ok: boolean; nextAt?: number; poolSize?: number; error?: string }> {
   const pushApiUrl = getPushApiUrl();
   if (!pushApiUrl) {
     return { ok: false, error: 'no push api url' };
   }
+
+  const immediate = opts.immediate !== false;
 
   try {
     const res = await fetch(`${pushApiUrl}/subscribe`, {
@@ -240,6 +242,7 @@ async function syncToPushServer(
         intervalMinutes: getIntervalMinutes(),
         pool: buildPool(),
         enabled,
+        immediate,
       }),
     });
     const data = (await res.json()) as {
@@ -362,7 +365,9 @@ async function showLocalTermNotification(termId?: string): Promise<void> {
   };
 }
 
-export async function rescheduleAll(): Promise<number> {
+export async function rescheduleAll(
+  opts: { immediate?: boolean } = {},
+): Promise<number> {
   const ok = await ensureNotificationPermission();
   if (!ok) return 0;
 
@@ -382,7 +387,7 @@ export async function rescheduleAll(): Promise<number> {
     return 0;
   }
 
-  const result = await syncToPushServer(sub, true);
+  const result = await syncToPushServer(sub, true, opts);
   return result.ok ? result.poolSize || POOL_SIZE : 0;
 }
 
@@ -405,15 +410,24 @@ export async function sendTestNotification(): Promise<boolean> {
   if (!sub) return true;
 
   // Ensure server has a pool, then ask it to push one (tests end-to-end Web Push)
-  await syncToPushServer(sub, true);
+  await syncToPushServer(sub, true, { immediate: false });
   const pushApiUrl = getPushApiUrl();
   try {
     if (pushApiUrl) {
-      await fetch(`${pushApiUrl}/test`, {
+      const testRes = await fetch(`${pushApiUrl}/test`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ endpoint: sub.endpoint }),
       });
+      if (!testRes.ok) {
+        const err = (await testRes.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        saveLastSync({
+          ok: false,
+          error: err.error || `test HTTP ${testRes.status}`,
+        });
+      }
     }
   } catch {
     // local already shown
@@ -433,10 +447,12 @@ export async function initNotificationScheduler(): Promise<void> {
     });
   }
 
+  // Quiet re-register: Render free FS is wiped on redeploy/sleep, so reopen
+  // must restore the subscription without firing an extra push.
   const wake = () => {
     if (!getNotificationsEnabled()) return;
     if (Notification.permission !== 'granted') return;
-    void rescheduleAll();
+    void rescheduleAll({ immediate: false });
   };
 
   document.addEventListener('visibilitychange', () => {
@@ -445,7 +461,7 @@ export async function initNotificationScheduler(): Promise<void> {
   window.addEventListener('focus', wake);
 
   if (getNotificationsEnabled() && Notification.permission === 'granted') {
-    await rescheduleAll();
+    await rescheduleAll({ immediate: false });
   }
 }
 

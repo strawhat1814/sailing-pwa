@@ -266,8 +266,9 @@ async function handle(req, res) {
     const enabled = body.enabled !== false;
     const key = subKey(body.subscription.endpoint);
 
-    // Always schedule first push soon after sync (don't keep old far-away nextAt)
-    const nextAt = Date.now() + 45_000;
+    const wantImmediate = body.immediate !== false;
+    // Always schedule soon after sync (don't keep an old far-away nextAt)
+    const nextAt = Date.now() + (wantImmediate ? 45_000 : randomGapMs(intervalMinutes));
 
     const store = await loadStore();
     store[key] = {
@@ -280,9 +281,9 @@ async function handle(req, res) {
     };
     await saveStore(store);
 
-    // Send one immediately so user sees it works
+    // Optional immediate push (Settings sync / test) — skip on quiet wake re-register
     let immediate = null;
-    if (enabled && pool.length) {
+    if (wantImmediate && enabled && pool.length) {
       try {
         const payload = pool[Math.floor(Math.random() * pool.length)];
         const status = await sendPush(body.subscription, payload);
