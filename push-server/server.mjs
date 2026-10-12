@@ -33,9 +33,7 @@ loadDotEnv(join(__dirname, '.env'));
 const DATA_DIR = process.env.DATA_DIR || join(__dirname, 'data');
 const SUBS_FILE = join(DATA_DIR, 'subscriptions.json');
 
-const PORT = Number(
-  process.env.SERVER_PORT || process.env.PORT || 3000,
-);
+const PORT = Number(process.env.SERVER_PORT || process.env.PORT || 3000);
 const VAPID_PUBLIC_KEY =
   process.env.VAPID_PUBLIC_KEY ||
   'BKPjkYH16YAQmBxARvV_IjRTsAhHRMSbLA8zcPY1--ULq8H-m9e7DJ1ZX7VyZFF7IrVlQuBEOlYmEjsA-2fg220';
@@ -130,7 +128,7 @@ async function sendPush(subscription, payload) {
       adminContact: VAPID_SUBJECT,
       options: {
         ttl: 60 * 60,
-        urgency: 'normal',
+        urgency: 'high',
       },
     },
   });
@@ -143,6 +141,7 @@ async function deliverDue() {
   const store = await loadStore();
   let sent = 0;
   let gone = 0;
+  let failed = 0;
   let dirty = false;
 
   for (const [key, record] of Object.entries(store)) {
@@ -164,14 +163,47 @@ async function deliverDue() {
         record.nextAt = Date.now() + randomGapMs(record.intervalMinutes || 60);
         record.updatedAt = Date.now();
         dirty = true;
+      } else {
+        failed += 1;
+        console.error('push bad status', key, status);
+        // retry sooner
+        record.nextAt = Date.now() + 60_000;
+        dirty = true;
       }
     } catch (err) {
+      failed += 1;
       console.error('push failed', key, err);
+      record.nextAt = Date.now() + 60_000;
+      dirty = true;
     }
   }
 
   if (dirty) await saveStore(store);
-  return { sent, gone };
+  return { sent, gone, failed };
+}
+
+async function statusPayload() {
+  const store = await loadStore();
+  const subs = Object.values(store);
+  const now = Date.now();
+  return {
+    ok: true,
+    vapidPrivate: Boolean(VAPID_PRIVATE_JWK),
+    subscribers: subs.length,
+    enabled: subs.filter((s) => s.enabled).length,
+    withPool: subs.filter((s) => s.pool?.length > 0).length,
+    nextAt: subs
+      .filter((s) => s.enabled)
+      .map((s) => s.nextAt)
+      .sort((a, b) => a - b)[0] || null,
+    nextInSec: (() => {
+      const n = subs
+        .filter((s) => s.enabled && s.nextAt)
+        .map((s) => s.nextAt)
+        .sort((a, b) => a - b)[0];
+      return n ? Math.max(0, Math.round((n - now) / 1000)) : null;
+    })(),
+  };
 }
 
 async function handle(req, res) {
@@ -184,8 +216,16 @@ async function handle(req, res) {
     return;
   }
 
-  if (req.method === 'GET' && url.pathname === '/health') {
-    sendJson(res, 200, { ok: true }, origin);
+  if (req.method === 'GET' && (url.pathname === '/health' || url.pathname === '/')) {
+    // Keep-alive pings also try to deliver due pushes (Render free sleeps otherwise)
+    const tick = await deliverDue();
+    const st = await statusPayload();
+    sendJson(res, 200, { ...st, tick }, origin);
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/status') {
+    sendJson(res, 200, await statusPayload(), origin);
     return;
   }
 
@@ -194,7 +234,23 @@ async function handle(req, res) {
     return;
   }
 
+  if (req.method === 'GET' && url.pathname === '/tick') {
+    const result = await deliverDue();
+    sendJson(res, 200, result, origin);
+    return;
+  }
+
   if (req.method === 'POST' && url.pathname === '/subscribe') {
+    if (!VAPID_PRIVATE_JWK) {
+      sendJson(
+        res,
+        500,
+        { error: 'VAPID_PRIVATE_JWK not set on server' },
+        origin,
+      );
+      return;
+    }
+
     const body = JSON.parse(await readBody(req));
 
     if (!body.subscription?.endpoint || !body.subscription.keys?.p256dh) {
@@ -210,11 +266,10 @@ async function handle(req, res) {
     const enabled = body.enabled !== false;
     const key = subKey(body.subscription.endpoint);
 
-    const store = await loadStore();
-    const prev = store[key];
-    let nextAt = Date.now() + randomGapMs(intervalMinutes);
-    if (prev?.nextAt && prev.nextAt > Date.now()) nextAt = prev.nextAt;
+    // Always schedule first push soon after sync (don't keep old far-away nextAt)
+    const nextAt = Date.now() + 45_000;
 
+    const store = await loadStore();
     store[key] = {
       subscription: body.subscription,
       intervalMinutes,
@@ -224,7 +279,40 @@ async function handle(req, res) {
       updatedAt: Date.now(),
     };
     await saveStore(store);
-    sendJson(res, 200, { ok: true, nextAt, poolSize: pool.length }, origin);
+
+    // Send one immediately so user sees it works
+    let immediate = null;
+    if (enabled && pool.length) {
+      try {
+        const payload = pool[Math.floor(Math.random() * pool.length)];
+        const status = await sendPush(body.subscription, payload);
+        immediate = { status, ok: status >= 200 && status < 300 };
+        if (status === 404 || status === 410) {
+          delete store[key];
+          await saveStore(store);
+        } else if (immediate.ok) {
+          store[key].nextAt = Date.now() + randomGapMs(intervalMinutes);
+          await saveStore(store);
+        }
+      } catch (err) {
+        immediate = {
+          ok: false,
+          error: err instanceof Error ? err.message : 'push failed',
+        };
+      }
+    }
+
+    sendJson(
+      res,
+      200,
+      {
+        ok: true,
+        nextAt: store[key]?.nextAt ?? nextAt,
+        poolSize: pool.length,
+        immediate,
+      },
+      origin,
+    );
     return;
   }
 
@@ -242,6 +330,15 @@ async function handle(req, res) {
   }
 
   if (req.method === 'POST' && url.pathname === '/test') {
+    if (!VAPID_PRIVATE_JWK) {
+      sendJson(
+        res,
+        500,
+        { error: 'VAPID_PRIVATE_JWK not set on server' },
+        origin,
+      );
+      return;
+    }
     const body = JSON.parse(await readBody(req));
     if (!body.endpoint) {
       sendJson(res, 400, { error: 'missing endpoint' }, origin);
@@ -250,7 +347,7 @@ async function handle(req, res) {
     const store = await loadStore();
     const record = store[subKey(body.endpoint)];
     if (!record) {
-      sendJson(res, 404, { error: 'not subscribed' }, origin);
+      sendJson(res, 404, { error: 'not subscribed — tap Συγχρόνισε ξανά first' }, origin);
       return;
     }
     if (!record.pool.length) {
@@ -258,14 +355,30 @@ async function handle(req, res) {
       return;
     }
     const payload = record.pool[Math.floor(Math.random() * record.pool.length)];
-    const status = await sendPush(record.subscription, payload);
-    if (status === 404 || status === 410) {
-      delete store[subKey(body.endpoint)];
-      await saveStore(store);
-      sendJson(res, 410, { error: 'subscription gone', status }, origin);
-      return;
+    try {
+      const status = await sendPush(record.subscription, payload);
+      if (status === 404 || status === 410) {
+        delete store[subKey(body.endpoint)];
+        await saveStore(store);
+        sendJson(res, 410, { error: 'subscription gone', status }, origin);
+        return;
+      }
+      sendJson(
+        res,
+        200,
+        { ok: status >= 200 && status < 300, status },
+        origin,
+      );
+    } catch (err) {
+      sendJson(
+        res,
+        500,
+        {
+          error: err instanceof Error ? err.message : 'push failed',
+        },
+        origin,
+      );
     }
-    sendJson(res, 200, { ok: status >= 200 && status < 300, status }, origin);
     return;
   }
 
@@ -280,7 +393,7 @@ async function handle(req, res) {
 
 if (!VAPID_PRIVATE_JWK) {
   console.warn(
-    'WARNING: VAPID_PRIVATE_JWK is not set — /subscribe will work, push send will fail.',
+    'WARNING: VAPID_PRIVATE_JWK is not set — push send will fail.',
   );
 }
 
@@ -291,11 +404,12 @@ createServer((req, res) => {
   });
 }).listen(PORT, () => {
   console.log(`sailing-push listening on :${PORT}`);
+  console.log(`vapidPrivate=${Boolean(VAPID_PRIVATE_JWK)}`);
 });
 
-const TICK_MS = Number(process.env.TICK_MS || 120_000);
+const TICK_MS = Number(process.env.TICK_MS || 60_000);
 setInterval(() => {
   void deliverDue().then((r) => {
-    if (r.sent || r.gone) console.log('tick', r);
+    if (r.sent || r.gone || r.failed) console.log('tick', r);
   });
 }, TICK_MS).unref?.();
