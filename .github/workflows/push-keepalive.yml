@@ -13,5 +13,11 @@ jobs:
       - name: Hit /tick
         run: |
           set -e
-          URL="${{ vars.PUSH_SERVER_URL || 'https://sailing-push.onrender.com' }}"
-          curl -fsS --max-time 90 "${URL}/tick" || curl -fsS --max-time 120 "${URL}/health"
+          URL="https://sailing-push.onrender.com"
+          echo "Pinging $URL/tick ..."
+          # Free Render may be cold — allow a long timeout / retry via /health
+          if ! curl -fsS --max-time 90 "${URL}/tick"; then
+            echo "tick failed, trying /health..."
+            curl -fsS --max-time 120 "${URL}/health"
+          fi
+          echo
