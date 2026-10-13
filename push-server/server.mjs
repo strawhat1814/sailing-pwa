@@ -1,6 +1,5 @@
 import { createServer } from 'node:http';
 import { existsSync, readFileSync } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildPushHTTPRequest } from '@pushforge/builder';
@@ -30,9 +29,6 @@ function loadDotEnv(filePath) {
 
 loadDotEnv(join(__dirname, '.env'));
 
-const DATA_DIR = process.env.DATA_DIR || join(__dirname, 'data');
-const SUBS_FILE = join(DATA_DIR, 'subscriptions.json');
-
 const PORT = Number(process.env.SERVER_PORT || process.env.PORT || 3000);
 const VAPID_PUBLIC_KEY =
   process.env.VAPID_PUBLIC_KEY ||
@@ -47,6 +43,17 @@ const ALLOWED_ORIGINS = (
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);
+
+// Persistent store — Render free FS is wiped on sleep; MantleDB keeps subs alive.
+const MANTLE_NS =
+  process.env.MANTLE_NS || 'sailing-pwa-push-85985';
+const MANTLE_KEY =
+  process.env.MANTLE_KEY ||
+  '18e90e41eded36301a77751173101767edc7d3a43835366ff0a6446e446d0b0c';
+const MANTLE_PATH = process.env.MANTLE_PATH || 'store';
+const MANTLE_URL = `https://mantledb.sh/v2/${MANTLE_NS}/${MANTLE_PATH}`;
+
+const MAX_POOL = 40;
 
 function subKey(endpoint) {
   let h = 0;
@@ -63,19 +70,79 @@ function randomGapMs(intervalMinutes) {
   return min + Math.floor(Math.random() * (max - min));
 }
 
+/** Keep pool under MantleDB 64KB free-tier limit. */
+function compactPool(pool) {
+  if (!Array.isArray(pool)) return [];
+  return pool.slice(0, MAX_POOL).map((item) => {
+    const choices = Array.isArray(item.choices)
+      ? item.choices.slice(0, 4).map((c) => String(c).slice(0, 80))
+      : undefined;
+    const bodyRaw = String(item.body || '');
+    // Drop duplicated numbered choices from body — SW rebuilds from choices[]
+    const body = bodyRaw.split('\n')[0].slice(0, 180);
+    return {
+      termId: item.termId,
+      title: String(item.title || '⛵ Ορολογία ιστιοπλοΐας').slice(0, 80),
+      body,
+      url: item.url,
+      tag: item.tag,
+      answer: item.answer ? String(item.answer).slice(0, 80) : undefined,
+      choices,
+    };
+  });
+}
+
 async function loadStore() {
   try {
-    const raw = await readFile(SUBS_FILE, 'utf8');
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === 'object' ? parsed : {};
-  } catch {
+    const res = await fetch(MANTLE_URL, {
+      headers: { 'X-Mantle-Key': MANTLE_KEY },
+    });
+    if (res.status === 404) return {};
+    if (!res.ok) {
+      console.error('mantle load', res.status, await res.text());
+      return {};
+    }
+    const data = await res.json();
+    if (data && typeof data === 'object' && data.subs && typeof data.subs === 'object') {
+      return data.subs;
+    }
+    // legacy accidental shape
+    if (data && typeof data === 'object' && !data.success && !data.error) {
+      return data;
+    }
+    return {};
+  } catch (err) {
+    console.error('mantle load failed', err);
     return {};
   }
 }
 
 async function saveStore(store) {
-  await mkdir(DATA_DIR, { recursive: true });
-  await writeFile(SUBS_FILE, JSON.stringify(store, null, 2), 'utf8');
+  const payload = JSON.stringify({ v: 1, updatedAt: Date.now(), subs: store });
+  if (payload.length > 60_000) {
+    // Emergency shrink: drop pool tails
+    for (const rec of Object.values(store)) {
+      if (rec?.pool?.length > 20) rec.pool = rec.pool.slice(0, 20);
+    }
+  }
+  const body = JSON.stringify({
+    v: 1,
+    updatedAt: Date.now(),
+    subs: store,
+  });
+  const res = await fetch(MANTLE_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Mantle-Key': MANTLE_KEY,
+    },
+    body,
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    console.error('mantle save', res.status, text);
+    throw new Error(`mantle save failed: ${res.status}`);
+  }
 }
 
 function cors(origin) {
@@ -166,7 +233,6 @@ async function deliverDue() {
       } else {
         failed += 1;
         console.error('push bad status', key, status);
-        // retry sooner
         record.nextAt = Date.now() + 60_000;
         dirty = true;
       }
@@ -188,6 +254,7 @@ async function statusPayload() {
   const now = Date.now();
   return {
     ok: true,
+    storage: 'mantle',
     vapidPrivate: Boolean(VAPID_PRIVATE_JWK),
     subscribers: subs.length,
     enabled: subs.filter((s) => s.enabled).length,
@@ -217,7 +284,6 @@ async function handle(req, res) {
   }
 
   if (req.method === 'GET' && (url.pathname === '/health' || url.pathname === '/')) {
-    // Keep-alive pings also try to deliver due pushes (Render free sleeps otherwise)
     const tick = await deliverDue();
     const st = await statusPayload();
     sendJson(res, 200, { ...st, tick }, origin);
@@ -262,13 +328,13 @@ async function handle(req, res) {
       typeof body.intervalMinutes === 'number' && body.intervalMinutes > 0
         ? body.intervalMinutes
         : 60;
-    const pool = Array.isArray(body.pool) ? body.pool.slice(0, 120) : [];
+    const pool = compactPool(body.pool);
     const enabled = body.enabled !== false;
     const key = subKey(body.subscription.endpoint);
 
     const wantImmediate = body.immediate !== false;
-    // Always schedule soon after sync (don't keep an old far-away nextAt)
-    const nextAt = Date.now() + (wantImmediate ? 45_000 : randomGapMs(intervalMinutes));
+    const nextAt =
+      Date.now() + (wantImmediate ? 45_000 : randomGapMs(intervalMinutes));
 
     const store = await loadStore();
     store[key] = {
@@ -281,7 +347,6 @@ async function handle(req, res) {
     };
     await saveStore(store);
 
-    // Optional immediate push (Settings sync / test) — skip on quiet wake re-register
     let immediate = null;
     if (wantImmediate && enabled && pool.length) {
       try {
@@ -294,6 +359,8 @@ async function handle(req, res) {
         } else if (immediate.ok) {
           store[key].nextAt = Date.now() + randomGapMs(intervalMinutes);
           await saveStore(store);
+        } else {
+          immediate.error = `FCM/push HTTP ${status}`;
         }
       } catch (err) {
         immediate = {
@@ -310,6 +377,7 @@ async function handle(req, res) {
         ok: true,
         nextAt: store[key]?.nextAt ?? nextAt,
         poolSize: pool.length,
+        storage: 'mantle',
         immediate,
       },
       origin,
@@ -348,7 +416,12 @@ async function handle(req, res) {
     const store = await loadStore();
     const record = store[subKey(body.endpoint)];
     if (!record) {
-      sendJson(res, 404, { error: 'not subscribed — tap Συγχρόνισε ξανά first' }, origin);
+      sendJson(
+        res,
+        404,
+        { error: 'not subscribed — tap Συγχρόνισε ξανά first' },
+        origin,
+      );
       return;
     }
     if (!record.pool.length) {
@@ -405,7 +478,7 @@ createServer((req, res) => {
   });
 }).listen(PORT, () => {
   console.log(`sailing-push listening on :${PORT}`);
-  console.log(`vapidPrivate=${Boolean(VAPID_PRIVATE_JWK)}`);
+  console.log(`vapidPrivate=${Boolean(VAPID_PRIVATE_JWK)} storage=mantle`);
 });
 
 const TICK_MS = Number(process.env.TICK_MS || 60_000);

@@ -122,11 +122,16 @@ export function SettingsPage() {
 
   const onTest = async () => {
     const ok = await sendTestNotification();
-    setStatus(
-      ok
-        ? 'Στάλθηκε δοκιμαστική (τοπική + push αν είναι ρυθμισμένο). Πάτα την ειδοποίηση — πρέπει να ανοίξει η εφαρμογή.'
-        : 'Απέτυχε — επίτρεψε ειδοποιήσεις στον browser.',
-    );
+    const syncInfo = getLastPushSync();
+    if (!ok) {
+      setStatus('Απέτυχε — επίτρεψε ειδοποιήσεις στον browser.');
+    } else if (syncInfo?.error) {
+      setStatus(`Τοπική OK, αλλά push απέτυχε: ${syncInfo.error}`);
+    } else {
+      setStatus(
+        'Στάλθηκε δοκιμαστική (τοπική + push). Πάτα την ειδοποίηση — πρέπει να ανοίξει η εφαρμογή.',
+      );
+    }
     await refreshInfo();
   };
 

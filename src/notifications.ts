@@ -7,7 +7,7 @@ const KEY_LAST_SYNC = 'sailing.notifications.lastPushSync';
 const KEY_ENDPOINT = 'sailing.notifications.pushEndpoint';
 const KEY_PUSH_URL = 'sailing.notifications.pushApiUrl';
 
-const POOL_SIZE = 80;
+const POOL_SIZE = 40;
 
 const DEFAULT_PUSH_API_URL = 'https://sailing-push.onrender.com';
 const ENV_PUSH_API_URL = (
