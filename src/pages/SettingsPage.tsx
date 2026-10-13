@@ -219,8 +219,8 @@ export function SettingsPage() {
         </button>
         <p style={{ margin: '0.65rem 0 0', opacity: 0.65, fontSize: '0.8rem' }}>
           Προεπιλογή: sailing-push.onrender.com. Πάτα «Συγχρόνισε ξανά» — πρέπει
-          να έρθει άμεσα μία ειδοποίηση. Το GitHub Action ξυπνά τον server κάθε
-          5′.
+          να έρθει άμεσα μία ειδοποίηση (και οι συνδρομές μένουν πλέον μετά το
+          sleep του Render).
         </p>
       </div>
 
